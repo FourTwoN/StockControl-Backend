@@ -20,8 +20,14 @@ public class PackagingCatalogController {
 
     @GET
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
-    public PagedResponse<PackagingCatalogDTO> list(@QueryParam("page") @DefaultValue("0") int page, @QueryParam("size") @DefaultValue("20") int size) {
-        return service.findAll(page, size);
+    public PagedResponse<PackagingCatalogDTO> list(
+            @QueryParam("page") @DefaultValue("0") int page,
+            @QueryParam("size") @DefaultValue("20") int size,
+            @QueryParam("search") String search,
+            @QueryParam("typeId") UUID typeId,
+            @QueryParam("materialId") UUID materialId,
+            @QueryParam("colorId") UUID colorId) {
+        return service.findAll(page, size, search, typeId, materialId, colorId);
     }
 
     @GET
@@ -35,6 +41,13 @@ public class PackagingCatalogController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR})
     public Response create(@Valid CreatePackagingCatalogRequest req) {
         return Response.status(Response.Status.CREATED).entity(service.create(req)).build();
+    }
+
+    @PUT
+    @Path("/{id}")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR})
+    public PackagingCatalogDTO update(@PathParam("id") UUID id, UpdatePackagingCatalogRequest req) {
+        return service.update(id, req);
     }
 
     @DELETE

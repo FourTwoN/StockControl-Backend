@@ -28,8 +28,12 @@ public class StockMovementController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
     public PagedResponse<StockMovementDTO> list(
             @QueryParam("page") @DefaultValue("0") int page,
-            @QueryParam("size") @DefaultValue("20") int size) {
-        return stockMovementService.findAll(page, size);
+            @QueryParam("size") @DefaultValue("20") int size,
+            @QueryParam("batchId") UUID batchId,
+            @QueryParam("type") String type,
+            @QueryParam("startDate") Instant startDate,
+            @QueryParam("endDate") Instant endDate) {
+        return stockMovementService.findAll(page, size, batchId, type, startDate, endDate);
     }
 
     @GET

@@ -23,12 +23,23 @@ public class PriceListService {
     @Inject
     PriceListRepository priceListRepository;
 
-    public PagedResponse<PriceListDTO> findAll(int page, int size) {
-        var query = priceListRepository.findAll();
+    public PagedResponse<PriceListDTO> findAll(int page, int size, String sort) {
+        String orderClause = resolveSort(sort);
+        var query = priceListRepository.find("1=1 order by " + orderClause);
         var priceLists = query.page(Page.of(page, size)).list();
-        long total = query.count();
+        long total = priceListRepository.count();
         var dtos = priceLists.stream().map(PriceListDTO::from).toList();
         return PagedResponse.of(dtos, page, size, total);
+    }
+
+    private String resolveSort(String sort) {
+        if (sort == null || sort.isBlank()) return "createdAt desc";
+        boolean desc = sort.startsWith("-");
+        String field = desc ? sort.substring(1) : sort;
+        return switch (field) {
+            case "name", "createdAt", "effectiveDate" -> field + (desc ? " desc" : " asc");
+            default -> "createdAt desc";
+        };
     }
 
     public PriceListDTO findById(UUID id) {

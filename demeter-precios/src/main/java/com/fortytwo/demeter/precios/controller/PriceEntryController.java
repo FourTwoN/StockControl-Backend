@@ -3,6 +3,7 @@ package com.fortytwo.demeter.precios.controller;
 import com.fortytwo.demeter.common.auth.RoleConstants;
 import com.fortytwo.demeter.precios.dto.CreatePriceEntryRequest;
 import com.fortytwo.demeter.precios.dto.PriceEntryDTO;
+import com.fortytwo.demeter.precios.dto.UpdatePriceEntryRequest;
 import com.fortytwo.demeter.precios.service.PriceEntryService;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -44,6 +45,16 @@ public class PriceEntryController {
             List<@Valid CreatePriceEntryRequest> requests) {
         List<PriceEntryDTO> created = priceEntryService.bulkAddEntries(priceListId, requests);
         return Response.status(Response.Status.CREATED).entity(created).build();
+    }
+
+    @PUT
+    @Path("/{entryId}")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR})
+    public PriceEntryDTO updateEntry(
+            @PathParam("priceListId") UUID priceListId,
+            @PathParam("entryId") UUID entryId,
+            @Valid UpdatePriceEntryRequest request) {
+        return priceEntryService.updateEntry(entryId, request);
     }
 
     @DELETE

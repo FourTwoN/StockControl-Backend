@@ -3,6 +3,7 @@ package com.fortytwo.demeter.precios.service;
 import com.fortytwo.demeter.common.exception.EntityNotFoundException;
 import com.fortytwo.demeter.precios.dto.CreatePriceEntryRequest;
 import com.fortytwo.demeter.precios.dto.PriceEntryDTO;
+import com.fortytwo.demeter.precios.dto.UpdatePriceEntryRequest;
 import com.fortytwo.demeter.precios.model.PriceEntry;
 import com.fortytwo.demeter.precios.model.PriceList;
 import com.fortytwo.demeter.precios.repository.PriceEntryRepository;
@@ -56,6 +57,16 @@ public class PriceEntryService {
 
         priceEntryRepository.persist(entries);
         return entries.stream().map(PriceEntryDTO::from).toList();
+    }
+
+    @Transactional
+    public PriceEntryDTO updateEntry(UUID entryId, UpdatePriceEntryRequest request) {
+        PriceEntry entry = priceEntryRepository.findByIdOptional(entryId)
+                .orElseThrow(() -> new EntityNotFoundException("PriceEntry", entryId));
+        if (request.price() != null) entry.setPrice(request.price());
+        if (request.currency() != null) entry.setCurrency(request.currency());
+        if (request.minQuantity() != null) entry.setMinQuantity(request.minQuantity());
+        return PriceEntryDTO.from(entry);
     }
 
     @Transactional

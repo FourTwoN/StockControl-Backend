@@ -15,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,12 +28,27 @@ public class StockBatchService {
     @Inject
     ProductRepository productRepository;
 
-    public PagedResponse<StockBatchDTO> findAll(int page, int size) {
-        var query = stockBatchRepository.findAll();
-        var batches = query.page(Page.of(page, size)).list();
-        long total = query.count();
-        var dtos = batches.stream().map(StockBatchDTO::from).toList();
-        return PagedResponse.of(dtos, page, size, total);
+    public PagedResponse<StockBatchDTO> findAll(int page, int size, UUID productId, UUID locationId, String status) {
+        StringBuilder query = new StringBuilder("1=1");
+        List<Object> params = new ArrayList<>();
+        int paramIndex = 1;
+        if (productId != null) {
+            query.append(" and product.id = ?").append(paramIndex++);
+            params.add(productId);
+        }
+        if (locationId != null) {
+            query.append(" and warehouseId = ?").append(paramIndex++);
+            params.add(locationId);
+        }
+        if (status != null && !status.isBlank()) {
+            query.append(" and status = ?").append(paramIndex++);
+            params.add(BatchStatus.valueOf(status));
+        }
+        String jpql = query.toString();
+        long total = stockBatchRepository.count(jpql, params.toArray());
+        var batches = stockBatchRepository.find(jpql + " order by createdAt desc", params.toArray())
+                .page(Page.of(page, size)).list();
+        return PagedResponse.of(batches.stream().map(StockBatchDTO::from).toList(), page, size, total);
     }
 
     public StockBatchDTO findById(UUID id) {

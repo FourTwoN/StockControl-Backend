@@ -2,9 +2,12 @@ package com.fortytwo.demeter.analytics.controller;
 
 import com.fortytwo.demeter.analytics.dto.DashboardSummary;
 import com.fortytwo.demeter.analytics.dto.InventoryValuation;
+import com.fortytwo.demeter.analytics.dto.KpiDTO;
 import com.fortytwo.demeter.analytics.dto.LocationOccupancy;
 import com.fortytwo.demeter.analytics.dto.MovementHistory;
 import com.fortytwo.demeter.analytics.dto.MovementSummary;
+import com.fortytwo.demeter.analytics.dto.SalesSummaryDTO;
+import com.fortytwo.demeter.analytics.dto.StockHistoryPointDTO;
 import com.fortytwo.demeter.analytics.dto.StockSummary;
 import com.fortytwo.demeter.analytics.dto.TopProductSales;
 import com.fortytwo.demeter.analytics.service.AnalyticsService;
@@ -90,5 +93,31 @@ public class AnalyticsController {
         Instant fromInstant = from != null ? Instant.parse(from) : null;
         Instant toInstant = to != null ? Instant.parse(to) : null;
         return analyticsService.getMovementHistory(page, size, movementType, fromInstant, toInstant);
+    }
+
+    @GET
+    @Path("/kpis")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.VIEWER})
+    public List<KpiDTO> getKpis() {
+        return analyticsService.getKpis();
+    }
+
+    @GET
+    @Path("/stock-history")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.VIEWER})
+    public List<StockHistoryPointDTO> getStockHistory(
+            @QueryParam("from") String from,
+            @QueryParam("to") String to) {
+        Instant fromInstant = from != null ? Instant.parse(from) : Instant.now().minusSeconds(30L * 24 * 60 * 60);
+        Instant toInstant = to != null ? Instant.parse(to) : Instant.now();
+        return analyticsService.getStockHistory(fromInstant, toInstant);
+    }
+
+    @GET
+    @Path("/sales-summary")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.VIEWER})
+    public List<SalesSummaryDTO> getSalesSummary(
+            @QueryParam("period") @DefaultValue("monthly") String period) {
+        return analyticsService.getSalesSummary(period);
     }
 }

@@ -28,8 +28,11 @@ public class StockBatchController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
     public PagedResponse<StockBatchDTO> list(
             @QueryParam("page") @DefaultValue("0") int page,
-            @QueryParam("size") @DefaultValue("20") int size) {
-        return stockBatchService.findAll(page, size);
+            @QueryParam("size") @DefaultValue("20") int size,
+            @QueryParam("productId") UUID productId,
+            @QueryParam("locationId") UUID locationId,
+            @QueryParam("status") String status) {
+        return stockBatchService.findAll(page, size, productId, locationId, status);
     }
 
     @GET

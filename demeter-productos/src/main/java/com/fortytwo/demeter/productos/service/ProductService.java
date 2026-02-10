@@ -26,12 +26,18 @@ public class ProductService {
     @Inject
     FamilyRepository familyRepository;
 
-    public PagedResponse<ProductDTO> findAll(int page, int size) {
+    public PagedResponse<ProductDTO> findAll(int page, int size, String search) {
+        if (search != null && !search.isBlank()) {
+            String pattern = "%" + search.toLowerCase() + "%";
+            String jpql = "lower(name) like ?1 or lower(sku) like ?1";
+            long total = productRepository.count(jpql, pattern);
+            var products = productRepository.find(jpql, pattern).page(Page.of(page, size)).list();
+            return PagedResponse.of(products.stream().map(ProductDTO::from).toList(), page, size, total);
+        }
         var query = productRepository.findAll();
         var products = query.page(Page.of(page, size)).list();
         long total = query.count();
-        var dtos = products.stream().map(ProductDTO::from).toList();
-        return PagedResponse.of(dtos, page, size, total);
+        return PagedResponse.of(products.stream().map(ProductDTO::from).toList(), page, size, total);
     }
 
     public ProductDTO findById(UUID id) {

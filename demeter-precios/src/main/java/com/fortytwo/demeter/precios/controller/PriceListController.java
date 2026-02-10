@@ -27,8 +27,9 @@ public class PriceListController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
     public PagedResponse<PriceListDTO> list(
             @QueryParam("page") @DefaultValue("0") int page,
-            @QueryParam("size") @DefaultValue("20") int size) {
-        return priceListService.findAll(page, size);
+            @QueryParam("size") @DefaultValue("20") int size,
+            @QueryParam("sort") String sort) {
+        return priceListService.findAll(page, size, sort);
     }
 
     @GET

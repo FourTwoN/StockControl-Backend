@@ -20,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,12 +38,31 @@ public class StockMovementService {
     @Inject
     StockBatchMovementRepository stockBatchMovementRepository;
 
-    public PagedResponse<StockMovementDTO> findAll(int page, int size) {
-        var query = stockMovementRepository.findAll();
-        var movements = query.page(Page.of(page, size)).list();
-        long total = query.count();
-        var dtos = movements.stream().map(StockMovementDTO::from).toList();
-        return PagedResponse.of(dtos, page, size, total);
+    public PagedResponse<StockMovementDTO> findAll(int page, int size, UUID batchId, String type, Instant startDate, Instant endDate) {
+        StringBuilder query = new StringBuilder("1=1");
+        List<Object> params = new ArrayList<>();
+        int paramIndex = 1;
+        if (batchId != null) {
+            query.append(" and referenceId = ?").append(paramIndex++);
+            params.add(batchId);
+        }
+        if (type != null && !type.isBlank()) {
+            query.append(" and movementType = ?").append(paramIndex++);
+            params.add(MovementType.valueOf(type));
+        }
+        if (startDate != null) {
+            query.append(" and performedAt >= ?").append(paramIndex++);
+            params.add(startDate);
+        }
+        if (endDate != null) {
+            query.append(" and performedAt <= ?").append(paramIndex++);
+            params.add(endDate);
+        }
+        String jpql = query.toString();
+        long total = stockMovementRepository.count(jpql, params.toArray());
+        var movements = stockMovementRepository.find(jpql + " order by performedAt desc", params.toArray())
+                .page(Page.of(page, size)).list();
+        return PagedResponse.of(movements.stream().map(StockMovementDTO::from).toList(), page, size, total);
     }
 
     public StockMovementDTO findById(UUID id) {

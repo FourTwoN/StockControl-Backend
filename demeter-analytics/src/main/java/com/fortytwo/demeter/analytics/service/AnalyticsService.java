@@ -3,9 +3,12 @@ package com.fortytwo.demeter.analytics.service;
 import com.fortytwo.demeter.analytics.dto.BatchMovementDetail;
 import com.fortytwo.demeter.analytics.dto.DashboardSummary;
 import com.fortytwo.demeter.analytics.dto.InventoryValuation;
+import com.fortytwo.demeter.analytics.dto.KpiDTO;
 import com.fortytwo.demeter.analytics.dto.LocationOccupancy;
 import com.fortytwo.demeter.analytics.dto.MovementHistory;
 import com.fortytwo.demeter.analytics.dto.MovementSummary;
+import com.fortytwo.demeter.analytics.dto.SalesSummaryDTO;
+import com.fortytwo.demeter.analytics.dto.StockHistoryPointDTO;
 import com.fortytwo.demeter.analytics.dto.StockSummary;
 import com.fortytwo.demeter.analytics.dto.TopProductSales;
 import com.fortytwo.demeter.common.dto.PagedResponse;
@@ -39,8 +42,10 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.IsoFields;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -386,6 +391,114 @@ public class AnalyticsService {
                 movement.getPerformedAt(),
                 List.copyOf(batchDetails)
         );
+    }
+
+    public List<KpiDTO> getKpis() {
+        LOG.debug("Generating KPIs");
+
+        long totalProducts = productRepository.count();
+        long activeBatches = stockBatchRepository.count("status", BatchStatus.ACTIVE);
+        long pendingSales = saleRepository.count("status", SaleStatus.PENDING);
+
+        Instant startOfToday = LocalDate.now(ZoneOffset.UTC)
+                .atStartOfDay(ZoneOffset.UTC)
+                .toInstant();
+        Instant endOfToday = startOfToday.plusSeconds(86400);
+        long completedSalesToday = saleRepository.count(
+                "status = ?1 and soldAt >= ?2 and soldAt < ?3",
+                SaleStatus.COMPLETED, startOfToday, endOfToday);
+
+        List<InventoryValuation> valuations = getInventoryValuation();
+        BigDecimal totalInventoryValue = valuations.stream()
+                .map(InventoryValuation::totalValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Compute trends - compare with 30 days ago data
+        Instant thirtyDaysAgo = Instant.now().minusSeconds(30L * 24 * 60 * 60);
+        Instant thirtyDaysAgoStart = thirtyDaysAgo.minusSeconds(86400);
+        long previousCompletedSales = saleRepository.count(
+                "status = ?1 and soldAt >= ?2 and soldAt < ?3",
+                SaleStatus.COMPLETED, thirtyDaysAgoStart, thirtyDaysAgo);
+
+        return List.of(
+                new KpiDTO("total_products", "Total Products",
+                        BigDecimal.valueOf(totalProducts), null, "count", null),
+                new KpiDTO("active_batches", "Active Batches",
+                        BigDecimal.valueOf(activeBatches), null, "count", null),
+                new KpiDTO("pending_sales", "Pending Sales",
+                        BigDecimal.valueOf(pendingSales), null, "count", null),
+                new KpiDTO("completed_sales_today", "Completed Sales Today",
+                        BigDecimal.valueOf(completedSalesToday),
+                        BigDecimal.valueOf(previousCompletedSales), "count",
+                        completedSalesToday >= previousCompletedSales ? "up" : "down"),
+                new KpiDTO("total_inventory_value", "Total Inventory Value",
+                        totalInventoryValue, null, "currency", null)
+        );
+    }
+
+    public List<StockHistoryPointDTO> getStockHistory(Instant from, Instant to) {
+        LOG.debugf("Generating stock history from %s to %s", from, to);
+
+        List<StockMovement> movements = stockMovementRepository
+                .find("performedAt >= ?1 and performedAt <= ?2 order by performedAt asc", from, to)
+                .list();
+
+        Map<String, BigDecimal> quantityByDate = new LinkedHashMap<>();
+        for (StockMovement m : movements) {
+            String date = m.getPerformedAt().atZone(ZoneOffset.UTC).toLocalDate().toString();
+            BigDecimal change = switch (m.getMovementType()) {
+                case ENTRADA -> m.getQuantity();
+                case MUERTE, VENTA -> m.getQuantity().negate();
+                case TRASPLANTE -> BigDecimal.ZERO;
+                case AJUSTE -> m.getQuantity();
+            };
+            quantityByDate.merge(date, change, BigDecimal::add);
+        }
+
+        return quantityByDate.entrySet().stream()
+                .map(e -> new StockHistoryPointDTO(
+                        e.getKey(),
+                        e.getValue(),
+                        e.getValue().compareTo(BigDecimal.ZERO) > 0 ? e.getValue() : BigDecimal.ZERO,
+                        e.getValue().compareTo(BigDecimal.ZERO) < 0 ? e.getValue().abs() : BigDecimal.ZERO))
+                .toList();
+    }
+
+    public List<SalesSummaryDTO> getSalesSummary(String period) {
+        LOG.debugf("Generating sales summary with period=%s", period);
+
+        List<Sale> completedSales = saleRepository.findByStatus(SaleStatus.COMPLETED);
+
+        Map<String, List<Sale>> grouped;
+        if ("weekly".equalsIgnoreCase(period)) {
+            grouped = completedSales.stream().collect(Collectors.groupingBy(sale -> {
+                LocalDate date = sale.getSoldAt().atZone(ZoneOffset.UTC).toLocalDate();
+                return date.getYear() + "-W" + String.format("%02d", date.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR));
+            }));
+        } else {
+            grouped = completedSales.stream().collect(Collectors.groupingBy(sale -> {
+                LocalDate date = sale.getSoldAt().atZone(ZoneOffset.UTC).toLocalDate();
+                return date.getYear() + "-" + String.format("%02d", date.getMonthValue());
+            }));
+        }
+
+        return grouped.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> {
+                    List<Sale> sales = entry.getValue();
+                    long totalSalesCount = sales.size();
+                    BigDecimal totalRevenue = sales.stream()
+                            .map(Sale::getTotalAmount)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    BigDecimal avgOrderValue = totalSalesCount > 0
+                            ? totalRevenue.divide(BigDecimal.valueOf(totalSalesCount), 2, RoundingMode.HALF_UP)
+                            : BigDecimal.ZERO;
+                    long totalItems = sales.stream()
+                            .flatMap(s -> s.getItems().stream())
+                            .count();
+                    return new SalesSummaryDTO(entry.getKey(), totalSalesCount, totalRevenue, avgOrderValue, totalItems);
+                })
+                .toList();
     }
 
     private BigDecimal calculateAverageCost(List<Cost> costs) {

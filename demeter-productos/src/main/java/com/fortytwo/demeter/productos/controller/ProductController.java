@@ -24,8 +24,9 @@ public class ProductController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
     public PagedResponse<ProductDTO> list(
             @QueryParam("page") @DefaultValue("0") int page,
-            @QueryParam("size") @DefaultValue("20") int size) {
-        return productService.findAll(page, size);
+            @QueryParam("size") @DefaultValue("20") int size,
+            @QueryParam("search") String search) {
+        return productService.findAll(page, size, search);
     }
 
     @GET
