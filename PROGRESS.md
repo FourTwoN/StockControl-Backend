@@ -124,7 +124,7 @@ No hay distincion mecanica core/DLC — todos se filtran igual. La distincion es
 - [x] **TenantConfigController** — GET /{tenantId}/config (@PermitAll) + GET/POST/PUT/DELETE admin (@RolesAllowed ADMIN)
 - [x] **Reemplazar TenantConfig.java** — dead record replaced with Tenant entity
 - [x] **Integration test** — TenantConfigTest: 7 tests (create, get config shape, 404, update, verify update, list, delete)
-- [ ] **Seed data** (opcional) — INSERT de 1-2 tenants de ejemplo en migration o import.sql para dev
+- [x] **Seed data** — V5 migration: go-bar (COMERCIANTES) + central-de-bebidas (DISTRIBUIDORES)
 
 #### Decisiones de diseno clave
 

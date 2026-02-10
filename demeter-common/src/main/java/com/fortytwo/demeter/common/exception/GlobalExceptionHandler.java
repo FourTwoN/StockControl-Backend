@@ -34,6 +34,16 @@ public class GlobalExceptionHandler implements ExceptionMapper<Exception> {
                     .build();
         }
 
+        // JAX-RS exceptions (404, 405, etc.) — pass through without logging as ERROR
+        if (exception instanceof jakarta.ws.rs.WebApplicationException wae) {
+            int status = wae.getResponse().getStatus();
+            String reason = wae.getMessage() != null ? wae.getMessage() : "Request error";
+            LOG.debugf("WebApplicationException [%d]: %s", status, reason);
+            return Response.status(status)
+                    .entity(new ErrorResponse(status, Response.Status.fromStatusCode(status).getReasonPhrase(), reason))
+                    .build();
+        }
+
         LOG.error("Unhandled exception", exception);
         return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
                 .entity(new ErrorResponse(500, "Internal Server Error", "An unexpected error occurred"))
