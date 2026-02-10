@@ -163,7 +163,7 @@ class CostControllerTest {
                 .then()
                 .statusCode(200)
                 .body("costType", equalTo("LABOR"))
-                .body("amount", equalTo(30))
+                .body("amount", equalTo(30.0F))
                 .body("description", equalTo("Updated"));
     }
 

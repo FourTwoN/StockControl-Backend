@@ -10,7 +10,7 @@ import java.util.UUID;
 public class ChatMessageRepository implements PanacheRepositoryBase<ChatMessage, UUID> {
 
     public List<ChatMessage> findBySessionId(UUID sessionId) {
-        return find("session.id order by createdAt asc", sessionId).list();
+        return find("session.id = ?1 order by createdAt asc", sessionId).list();
     }
 
     public long countBySessionId(UUID sessionId) {
