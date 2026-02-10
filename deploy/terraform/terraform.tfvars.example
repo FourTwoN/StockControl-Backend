@@ -1,0 +1,62 @@
+# =============================================================================
+# Demeter AI 2.0 — Terraform Variables Example
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# NEVER commit terraform.tfvars to version control!
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Project Configuration (Required)
+# -----------------------------------------------------------------------------
+
+project_id  = "your-gcp-project-id"
+region      = "us-central1"
+environment = "prod" # or "staging"
+
+# -----------------------------------------------------------------------------
+# Database Configuration (Required)
+# -----------------------------------------------------------------------------
+
+# Generate a strong password: openssl rand -base64 32
+db_password = "your-strong-database-password"
+
+# Optional: Adjust database sizing
+# db_tier           = "db-custom-2-4096"  # 2 vCPU, 4GB RAM
+# db_disk_size      = 20                   # GB
+# db_max_connections = 200
+
+# -----------------------------------------------------------------------------
+# Cloud Run Configuration (Optional)
+# -----------------------------------------------------------------------------
+
+# cloudrun_min_instances = 0   # 0 for scale-to-zero (cost savings)
+# cloudrun_max_instances = 10
+# cloudrun_cpu           = "2"
+# cloudrun_memory        = "1Gi"
+
+# -----------------------------------------------------------------------------
+# OIDC / Auth0 Configuration (Required)
+# -----------------------------------------------------------------------------
+
+# Production Auth0 tenant
+oidc_auth_server_url = "https://your-tenant.auth0.com/"
+oidc_client_id       = "your-auth0-client-id"
+oidc_issuer          = "https://your-tenant.auth0.com/"
+
+# -----------------------------------------------------------------------------
+# CORS Configuration (Optional)
+# -----------------------------------------------------------------------------
+
+# Frontend URL(s) - comma-separated for multiple
+cors_origins = "https://cultivos.demeter.app,https://vending.demeter.app"
+
+# -----------------------------------------------------------------------------
+# Custom Domain (Optional)
+# -----------------------------------------------------------------------------
+
+# Custom domain for the API (requires DNS verification first)
+# Leave empty to use the auto-generated Cloud Run URL
+custom_domain = "api.demeter.app"
+
+# Frontend domains for CORS (used if cors_origins not set)
+frontend_domains = ["cultivos.demeter.app", "vending.demeter.app"]

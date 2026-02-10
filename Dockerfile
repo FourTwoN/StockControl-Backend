@@ -30,8 +30,8 @@ RUN gradle dependencies --no-daemon || true
 # Copy source code
 COPY . .
 
-# Build the application
-RUN gradle :demeter-app:quarkusBuild --no-daemon -Dquarkus.package.jar.type=uber-jar
+# Build the application (fast-jar for better Cloud Run startup)
+RUN gradle :demeter-app:quarkusBuild --no-daemon
 
 # =============================================
 # Stage 2: Runtime

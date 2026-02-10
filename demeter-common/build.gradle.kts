@@ -12,6 +12,9 @@ dependencies {
     api("io.quarkus:quarkus-smallrye-openapi")
     api("io.quarkus:quarkus-flyway")
 
+    // Cloud SQL Socket Factory for Cloud Run deployment
+    api("com.google.cloud.sql:postgres-socket-factory:1.21.0")
+
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-junit5-mockito")
 }

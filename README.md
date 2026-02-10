@@ -272,23 +272,512 @@ curl -X POST http://localhost:8080/api/v1/products \
 
 ---
 
-## Production Deployment
+## Production Deployment (Google Cloud Platform)
 
-### Authentication
+This project is designed for deployment on **Google Cloud Platform** using Cloud Run (serverless containers) and Cloud SQL (managed PostgreSQL). The infrastructure is fully defined as code using Terraform.
 
-Production uses OIDC (Auth0). The JWT token carries a `tenant_id` claim that the backend uses to resolve the tenant. Roles are mapped from the `permissions` claim.
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              GOOGLE CLOUD PLATFORM                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐      ┌─────────────────────────────────────────────────┐  │
+│  │   Client    │      │                  VPC Network                    │  │
+│  │  (Browser)  │      │                 demeter-vpc                     │  │
+│  └──────┬──────┘      │  ┌───────────────────────────────────────────┐  │  │
+│         │             │  │           Subnet 10.0.0.0/24              │  │  │
+│         ▼             │  │                                           │  │  │
+│  ┌──────────────┐     │  │  ┌─────────────┐    ┌─────────────────┐  │  │  │
+│  │ Cloud Run    │     │  │  │ VPC Access  │    │   Cloud SQL     │  │  │  │
+│  │ (Public URL) │─────┼──┼─▶│ Connector   │───▶│  PostgreSQL 17  │  │  │  │
+│  │              │     │  │  │ 10.8.0.0/28 │    │  (Private IP)   │  │  │  │
+│  │ demeter-     │     │  │  └─────────────┘    └─────────────────┘  │  │  │
+│  │ backend-prod │     │  │                                           │  │  │
+│  └──────┬───────┘     │  └───────────────────────────────────────────┘  │  │
+│         │             │                                                  │  │
+│         │             └──────────────────────────────────────────────────┘  │
+│         │                                                                    │
+│         ▼                                                                    │
+│  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────────┐    │
+│  │ Domain       │     │ Artifact     │     │     Secret Manager       │    │
+│  │ Mapping      │     │ Registry     │     │                          │    │
+│  │              │     │              │     │ • demeter-db-url         │    │
+│  │ api.demeter  │     │ demeter/     │     │ • demeter-db-user        │    │
+│  │ .app         │     │ backend:tag  │     │ • demeter-db-password    │    │
+│  └──────────────┘     └──────────────┘     │ • demeter-oidc-*         │    │
+│                                             └──────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Infrastructure Components
+
+| Component | Resource | Configuration |
+|-----------|----------|---------------|
+| **Compute** | Cloud Run v2 | 0-10 instances, 2 vCPU, 1GB RAM, scale-to-zero |
+| **Database** | Cloud SQL PostgreSQL 17 | db-custom-2-4096, 20GB SSD, private IP only |
+| **Networking** | VPC + Subnet | 10.0.0.0/24, private service connection |
+| **Connectivity** | VPC Access Connector | 10.8.0.0/28, 2-3 instances |
+| **Secrets** | Secret Manager | 6 secrets (DB + OIDC credentials) |
+| **Registry** | Artifact Registry | Docker format, 30-day cleanup policy |
+| **Domain** | Cloud Run Domain Mapping | Custom domain with managed SSL |
+| **CI/CD** | Cloud Build | Triggered on push to main |
+
+### Terraform File Structure
+
+All infrastructure code lives in `deploy/terraform/`:
+
+```
+deploy/terraform/
+├── versions.tf              # Terraform 1.5+, Google provider ~5.0
+├── variables.tf             # All input variables with validation
+├── outputs.tf               # URLs, IPs, connection strings
+├── vpc.tf                   # VPC, subnet, private service connection
+├── cloudsql.tf              # PostgreSQL instance, database, user
+├── secrets.tf               # Secret Manager resources
+├── iam.tf                   # Service account + IAM bindings
+├── artifact-registry.tf     # Docker image repository
+├── cloudrun.tf              # Cloud Run service configuration
+├── domain.tf                # Custom domain mapping
+├── terraform.tfvars.example # Template for your values
+└── .gitignore               # Protects sensitive files
+```
+
+### Key Design Decisions
+
+#### 1. Private Database Connectivity
+
+Cloud SQL has **no public IP**. All connections go through the VPC:
+
+```hcl
+# cloudsql.tf
+ip_configuration {
+  ipv4_enabled    = false           # No public IP
+  private_network = google_compute_network.vpc.id
+}
+```
+
+Cloud Run connects via **VPC Access Connector**:
+
+```hcl
+# cloudrun.tf
+vpc_access {
+  connector = google_vpc_access_connector.connector.id
+  egress    = "PRIVATE_RANGES_ONLY"  # Only private traffic through VPC
+}
+```
+
+#### 2. Cloud SQL Socket Factory
+
+The application uses Google's Cloud SQL Socket Factory for secure connections without managing SSL certificates:
+
+```kotlin
+// demeter-common/build.gradle.kts
+api("com.google.cloud.sql:postgres-socket-factory:1.21.0")
+```
+
+JDBC URL format for Cloud Run:
+```
+jdbc:postgresql:///demeter?cloudSqlInstance=PROJECT:REGION:INSTANCE&socketFactory=com.google.cloud.sql.postgres.SocketFactory
+```
+
+#### 3. Secrets Management
+
+All sensitive values are stored in **Secret Manager** and injected as environment variables:
+
+| Secret | Purpose | Used By |
+|--------|---------|---------|
+| `demeter-db-url-{env}` | JDBC connection string with socket factory | Cloud Run |
+| `demeter-db-user-{env}` | Database username | Cloud Run |
+| `demeter-db-password-{env}` | Database password | Cloud Run |
+| `demeter-oidc-auth-server-url-{env}` | Auth0 tenant URL | Cloud Run |
+| `demeter-oidc-client-id-{env}` | Auth0 application ID | Cloud Run |
+| `demeter-oidc-issuer-{env}` | JWT issuer URL | Cloud Run |
+
+Secrets are accessed via IAM bindings, not embedded in config:
+
+```hcl
+# iam.tf
+resource "google_secret_manager_secret_iam_member" "db_password_access" {
+  secret_id = google_secret_manager_secret.db_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.cloudrun.email}"
+}
+```
+
+#### 4. Scale-to-Zero with Fast Startup
+
+Cloud Run is configured for cost optimization:
+
+```hcl
+# cloudrun.tf
+scaling {
+  min_instance_count = 0   # Scale to zero when idle
+  max_instance_count = 10  # Handle traffic spikes
+}
+
+resources {
+  cpu_idle          = true   # Release CPU when idle
+  startup_cpu_boost = true   # Extra CPU during cold start
+}
+```
+
+Quarkus **fast-jar** packaging (not uber-jar) is used for faster cold starts:
+
+```dockerfile
+# Dockerfile
+RUN gradle :demeter-app:quarkusBuild --no-daemon  # Produces fast-jar by default
+```
+
+#### 5. Health Probes
+
+Cloud Run uses Quarkus health endpoints for container lifecycle:
+
+```hcl
+# cloudrun.tf
+startup_probe {
+  http_get {
+    path = "/q/health/started"
+    port = 8080
+  }
+  initial_delay_seconds = 5
+  period_seconds        = 3
+  failure_threshold     = 30  # 90 seconds max startup time
+}
+
+liveness_probe {
+  http_get {
+    path = "/q/health/live"
+    port = 8080
+  }
+  period_seconds = 30
+}
+```
+
+#### 6. Database Configuration
+
+PostgreSQL 17 with production-ready settings:
+
+```hcl
+# cloudsql.tf
+settings {
+  tier              = var.db_tier           # db-custom-2-4096 (2 vCPU, 4GB)
+  availability_type = "REGIONAL"            # High availability (prod)
+  disk_type         = "PD_SSD"              # SSD for performance
+  disk_autoresize   = true                  # Auto-grow storage
+
+  database_flags {
+    name  = "max_connections"
+    value = "200"
+  }
+
+  database_flags {
+    name  = "cloudsql.enable_pg_vector"     # For future AI features
+    value = "on"
+  }
+
+  backup_configuration {
+    enabled                        = true
+    point_in_time_recovery_enabled = true   # PITR for prod
+    start_time                     = "03:00"
+    transaction_log_retention_days = 7
+
+    backup_retention_settings {
+      retained_backups = 30                 # 30 days of backups
+    }
+  }
+
+  insights_config {
+    query_insights_enabled = true           # Query performance monitoring
+  }
+}
+
+deletion_protection = true                  # Prevent accidental deletion
+```
+
+### Deployment Steps
+
+#### Prerequisites
+
+1. **GCP Project** with billing enabled
+2. **gcloud CLI** installed and authenticated
+3. **Terraform** >= 1.5
+4. **Auth0 tenant** with API and Application configured
+5. **Domain** verified in Google Search Console (for custom domain)
+
+#### 1. Enable Required APIs
+
+```bash
+gcloud services enable \
+  run.googleapis.com \
+  sqladmin.googleapis.com \
+  secretmanager.googleapis.com \
+  artifactregistry.googleapis.com \
+  vpcaccess.googleapis.com \
+  servicenetworking.googleapis.com \
+  cloudbuild.googleapis.com \
+  compute.googleapis.com
+```
+
+#### 2. Create Terraform State Bucket
+
+```bash
+PROJECT_ID=$(gcloud config get-value project)
+gsutil mb -l us-central1 gs://${PROJECT_ID}-terraform-state
+gsutil versioning set on gs://${PROJECT_ID}-terraform-state
+```
+
+#### 3. Configure Variables
+
+```bash
+cd deploy/terraform
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Edit `terraform.tfvars`:
+
+```hcl
+# GCP Configuration
+project_id  = "my-gcp-project"
+region      = "us-central1"
+environment = "prod"
+
+# Database (generate: openssl rand -base64 32)
+db_password = "super-secure-password-here"
+
+# Auth0 Configuration
+oidc_auth_server_url = "https://my-tenant.auth0.com/"
+oidc_client_id       = "abc123def456"
+oidc_issuer          = "https://my-tenant.auth0.com/"
+
+# Custom Domain (optional)
+custom_domain = "api.demeter.app"
+
+# CORS (frontend domains)
+cors_origins = "https://cultivos.demeter.app,https://vending.demeter.app"
+```
+
+#### 4. Deploy Infrastructure
+
+```bash
+terraform init
+terraform plan    # Review changes
+terraform apply   # Create resources (takes ~10 minutes)
+```
+
+#### 5. Configure DNS (for custom domain)
+
+Add CNAME record in your DNS provider:
+
+| Type | Name | Value | TTL |
+|------|------|-------|-----|
+| CNAME | api | ghs.googlehosted.com. | 300 |
+
+SSL certificate is automatically provisioned (15-30 minutes).
+
+#### 6. Build and Deploy Application
+
+**Option A: Manual**
+
+```bash
+# Build and push image
+docker build -t us-central1-docker.pkg.dev/${PROJECT_ID}/demeter/backend:latest .
+docker push us-central1-docker.pkg.dev/${PROJECT_ID}/demeter/backend:latest
+
+# Deploy
+gcloud run deploy demeter-backend-prod \
+  --image us-central1-docker.pkg.dev/${PROJECT_ID}/demeter/backend:latest \
+  --region us-central1
+```
+
+**Option B: Cloud Build (CI/CD)**
+
+Push to main branch triggers automatic build and deploy via `deploy/cloudbuild.yaml`.
+
+### CI/CD Pipeline (Cloud Build)
+
+The pipeline (`deploy/cloudbuild.yaml`) runs on every push to main:
+
+```yaml
+steps:
+  # 1. Run tests
+  - name: "gradle:9.3-jdk25"
+    args: ["test", "--no-daemon", "--parallel"]
+
+  # 2. Build Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "...", "."]
+
+  # 3. Push to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "--all-tags", "..."]
+
+  # 4. Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    args: ["run", "deploy", "demeter-backend-prod", ...]
+```
+
+### Environment Variables
+
+The application reads these environment variables in production:
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `QUARKUS_PROFILE` | Terraform | Activates `%prod` config prefix |
+| `DB_URL` | Secret Manager | JDBC connection string |
+| `DB_USER` | Secret Manager | Database username |
+| `DB_PASSWORD` | Secret Manager | Database password |
+| `OIDC_AUTH_SERVER_URL` | Secret Manager | Auth0 server URL |
+| `OIDC_CLIENT_ID` | Secret Manager | Auth0 client ID |
+| `OIDC_ISSUER` | Secret Manager | JWT issuer for validation |
+| `CORS_ORIGINS` | Terraform | Allowed frontend origins |
+
+### Authentication (Auth0)
+
+Production uses **Auth0** for OIDC authentication:
 
 ```properties
+# application.properties
 %prod.quarkus.oidc.auth-server-url=${OIDC_AUTH_SERVER_URL}
 %prod.quarkus.oidc.client-id=${OIDC_CLIENT_ID}
 %prod.quarkus.oidc.token.issuer=${OIDC_ISSUER}
+quarkus.oidc.application-type=service
+quarkus.oidc.roles.role-claim-path=permissions
 ```
 
-### Infrastructure
+#### Auth0 API Configuration
 
-Included configurations for:
-- **Docker**: Multi-stage Dockerfile + docker-compose (PostgreSQL 17 + pgAdmin)
-- **Google Cloud**: Cloud Run service YAML, Cloud Build CI/CD, Terraform (Cloud Run + Cloud SQL)
+Create an Auth0 API with these settings:
+
+| Setting | Value |
+|---------|-------|
+| Identifier (Audience) | `https://api.demeter.app` |
+| Token Expiration | 86400 (24 hours) |
+| Allow Offline Access | Enabled (for refresh tokens) |
+
+#### Custom Claims
+
+Configure an Auth0 Action to add tenant_id to tokens:
+
+```javascript
+exports.onExecutePostLogin = async (event, api) => {
+  const namespace = 'https://demeter.app';
+  api.accessToken.setCustomClaim(`${namespace}/tenant_id`, event.user.app_metadata.tenant_id);
+  api.accessToken.setCustomClaim(`${namespace}/roles`, event.authorization?.roles || []);
+};
+```
+
+#### Roles Configuration
+
+Map Auth0 permissions to application roles:
+
+| Auth0 Permission | Application Role | Access Level |
+|------------------|------------------|--------------|
+| `read:all` | VIEWER | Read-only access |
+| `write:all` | WORKER | Read + limited write |
+| `manage:all` | SUPERVISOR | Full write access |
+| `admin:all` | ADMIN | Full access + delete |
+
+### Cost Estimation
+
+| Resource | Configuration | Monthly Cost (USD) |
+|----------|---------------|--------------------|
+| Cloud Run | 0-10 instances, 2 vCPU, 1GB | $0-50 (usage-based) |
+| Cloud SQL | db-custom-2-4096, 20GB SSD | ~$70 |
+| VPC Connector | 2 e2-micro instances | ~$15 |
+| Secret Manager | 6 secrets, 1000 accesses | ~$0.50 |
+| Artifact Registry | <10GB storage | ~$1 |
+| Cloud Build | 120 min/month free tier | $0 |
+| **Total** | | **~$90-140/month** |
+
+*Scale-to-zero Cloud Run significantly reduces costs during low traffic periods.*
+
+### Monitoring and Logging
+
+#### Cloud Run Metrics
+- Request count, latency (p50, p95, p99)
+- Instance count, CPU/memory utilization
+- Container startup latency
+
+#### Cloud SQL Metrics
+- CPU utilization, memory usage
+- Disk utilization, I/O operations
+- Connection count, query insights
+
+#### Logs
+```bash
+# Cloud Run logs
+gcloud run services logs read demeter-backend-prod --region=us-central1
+
+# Cloud SQL logs (via Cloud Logging)
+gcloud logging read "resource.type=cloudsql_database"
+```
+
+### Troubleshooting
+
+#### Connection to Cloud SQL fails
+
+1. Verify VPC Connector is running:
+   ```bash
+   gcloud compute networks vpc-access connectors describe demeter-vpc-connector \
+     --region=us-central1
+   ```
+
+2. Check service account has Cloud SQL Client role:
+   ```bash
+   gcloud projects get-iam-policy ${PROJECT_ID} \
+     --flatten="bindings[].members" \
+     --filter="bindings.role:roles/cloudsql.client"
+   ```
+
+3. Verify private service connection:
+   ```bash
+   gcloud services vpc-peerings list --network=demeter-vpc-prod
+   ```
+
+#### Secrets not accessible
+
+```bash
+# Check IAM bindings
+gcloud secrets get-iam-policy demeter-db-url-prod
+
+# Test secret access
+gcloud secrets versions access latest --secret=demeter-db-url-prod
+```
+
+#### Startup probe failing
+
+```bash
+# Check container logs
+gcloud run services logs read demeter-backend-prod --region=us-central1 --limit=50
+
+# Describe service for events
+gcloud run services describe demeter-backend-prod --region=us-central1
+```
+
+#### Custom domain not working
+
+```bash
+# Check domain mapping status
+gcloud run domain-mappings describe --domain=api.demeter.app --region=us-central1
+
+# Verify DNS
+dig api.demeter.app CNAME
+```
+
+### Security Checklist
+
+- [ ] Database password is strong (32+ characters, generated randomly)
+- [ ] Cloud SQL has `deletion_protection = true`
+- [ ] Cloud SQL has no public IP (`ipv4_enabled = false`)
+- [ ] All secrets stored in Secret Manager (not in code or environment)
+- [ ] CORS origins restricted to specific frontend domains
+- [ ] Auth0 configured with appropriate token expiration
+- [ ] VPC firewall rules reviewed
+- [ ] Cloud Run service account has minimal permissions
+- [ ] Terraform state bucket has versioning enabled
+- [ ] `terraform.tfvars` is in `.gitignore`
 
 ---
 
