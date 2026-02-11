@@ -6,6 +6,7 @@ import com.fortytwo.demeter.fotos.dto.CreatePhotoSessionRequest;
 import com.fortytwo.demeter.fotos.dto.EstimationDTO;
 import com.fortytwo.demeter.fotos.dto.PhotoSessionDTO;
 import com.fortytwo.demeter.fotos.dto.ImageDTO;
+import com.fortytwo.demeter.fotos.dto.ImageWithUrlsDTO;
 import com.fortytwo.demeter.fotos.dto.SessionStatusDTO;
 import com.fortytwo.demeter.fotos.service.ImageService;
 import com.fortytwo.demeter.fotos.service.PhotoSessionService;
@@ -78,5 +79,31 @@ public class PhotoSessionController {
     @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
     public List<EstimationDTO> getEstimations(@PathParam("id") UUID id) {
         return photoSessionService.findEstimationsBySessionId(id);
+    }
+
+    /**
+     * Get session images with signed URLs for direct browser access.
+     *
+     * <p>Returns images with time-limited signed URLs that can be used
+     * directly in img src attributes. URLs expire after configured duration
+     * (default 60 minutes).
+     */
+    @GET
+    @Path("/{id}/images/with-urls")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
+    public List<ImageWithUrlsDTO> getImagesWithUrls(@PathParam("id") UUID id) {
+        return imageService.getSessionImagesWithUrls(id);
+    }
+
+    /**
+     * Get a single image with signed URL.
+     */
+    @GET
+    @Path("/{sessionId}/images/{imageId}/with-url")
+    @RolesAllowed({RoleConstants.ADMIN, RoleConstants.SUPERVISOR, RoleConstants.WORKER, RoleConstants.VIEWER})
+    public ImageWithUrlsDTO getImageWithUrl(
+            @PathParam("sessionId") UUID sessionId,
+            @PathParam("imageId") UUID imageId) {
+        return imageService.getImageWithUrl(imageId);
     }
 }
