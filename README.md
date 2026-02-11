@@ -781,6 +781,137 @@ dig api.demeter.app CNAME
 
 ---
 
+## Cloud Tasks Integration (ML Processing)
+
+The Backend uses **Google Cloud Tasks** to dispatch ML processing jobs asynchronously to the ML Worker service.
+
+### Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────────┐     ┌─────────────┐
+│   Frontend  │────▶│   Backend   │────▶│   Cloud Tasks       │────▶│  ML Worker  │
+│             │     │             │     │  ml-processing-queue│     │  (FastAPI)  │
+└─────────────┘     └─────────────┘     └─────────────────────┘     └──────┬──────┘
+                                                                           │
+                                                                           ▼
+                                                                    ┌─────────────┐
+                                                                    │  Cloud SQL  │
+                                                                    │  (results)  │
+                                                                    └─────────────┘
+```
+
+### Flow
+
+1. **Frontend** uploads image via `/api/v1/ml/process`
+2. **Backend** stores image in Cloud Storage, creates DB record
+3. **Backend** enqueues task in Cloud Tasks with OIDC token
+4. **Cloud Tasks** calls ML Worker's `/tasks/process` endpoint
+5. **ML Worker** processes image, writes results to DB
+6. **ML Worker** calls callback URL (optional) to notify Backend
+7. **Frontend** polls `/api/v1/photo-sessions/{id}/status` for progress
+
+### Configuration
+
+```properties
+# application.properties
+
+# Dev: disabled (logs tasks without creating them)
+%dev.demeter.cloudtasks.enabled=false
+
+# Production
+%prod.demeter.cloudtasks.enabled=true
+%prod.demeter.cloudtasks.project-id=${GCP_PROJECT_ID}
+%prod.demeter.cloudtasks.location=${GCP_REGION:us-central1}
+%prod.demeter.cloudtasks.ml-worker-url=${ML_WORKER_URL}
+%prod.demeter.cloudtasks.queue-name=ml-processing-queue
+%prod.demeter.cloudtasks.service-account-email=${CLOUDTASKS_SA_EMAIL}
+```
+
+### Key Classes
+
+| Class | Purpose |
+|-------|---------|
+| `CloudTasksService` | Creates tasks in Cloud Tasks queue |
+| `CloudTasksConfig` | Configuration mapping for Cloud Tasks |
+| `ProcessingTaskRequest` | Task payload (snake_case JSON for Python) |
+| `MLProcessingController` | Production endpoint that enqueues tasks |
+| `DevUploadController` | Dev endpoint that calls ML Worker directly |
+
+---
+
+## Cloud Storage Integration
+
+The Backend uses a **storage-agnostic abstraction** for image storage. The current implementation uses Google Cloud Storage, but can be swapped for S3 or other providers.
+
+### Storage Structure
+
+```
+gs://stockcontrol-images/
+└── {industry}/                    # e.g., cultivadores/
+    └── {tenant_id}/               # e.g., cactus-mendoza/
+        ├── sessions/
+        │   └── {session_id}/
+        │       ├── original/      # Original uploaded images
+        │       ├── processed/     # ML-processed images
+        │       ├── thumbnails/    # Web-optimized thumbnails
+        │       └── web/           # Web-size images
+        └── products/
+            └── {product_id}/
+                └── images/
+```
+
+### Configuration
+
+```properties
+# Provider-agnostic config (can swap GCS for S3)
+%prod.demeter.storage.bucket=stockcontrol-images
+%prod.demeter.storage.project-id=${GCP_PROJECT_ID}
+%prod.demeter.storage.base-path=cultivadores
+demeter.storage.url-expiration-minutes=60
+```
+
+### Key Classes
+
+| Class | Purpose |
+|-------|---------|
+| `ImageStorageService` | Port (interface) for storage operations |
+| `GcsStorageService` | GCS adapter (production) |
+| `LocalStorageService` | Local filesystem adapter (development) |
+| `LocalStorageController` | Serves local files in dev mode |
+
+### Signed URLs
+
+Images are served via **signed URLs** for security:
+- URLs expire after configurable time (default: 60 minutes)
+- No public bucket access required
+- Works with both GCS (V4 signatures) and local dev
+
+---
+
+## Artifact Registry
+
+Docker images are organized by **industry** in Google Artifact Registry:
+
+```
+us-central1-docker.pkg.dev/PROJECT/
+└── cultivadores/               # Industry-specific repo
+    ├── backend:v1.0.0
+    ├── backend:latest
+    ├── frontend:v1.0.0
+    ├── frontend:latest
+    ├── mlworker:v1.0.0
+    └── mlworker:latest
+```
+
+### Why per-industry repos?
+
+- **Isolated permissions**: Grant access per industry
+- **Independent versioning**: Each industry can be at different versions
+- **Clear organization**: Easy to identify which images belong where
+- **Future-proof**: Add new industries without affecting existing ones
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
@@ -796,3 +927,6 @@ dig api.demeter.app CNAME
 | Build | Gradle 9.3.1 (multi-project) |
 | Testing | JUnit 5 + REST Assured + Testcontainers |
 | API Docs | SmallRye OpenAPI + Swagger UI |
+| Task Queue | Google Cloud Tasks |
+| Storage | Google Cloud Storage (provider-agnostic interface) |
+| Registry | Google Artifact Registry |
